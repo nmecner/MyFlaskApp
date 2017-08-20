@@ -3,6 +3,7 @@ from data import Articles
 from flask_mysqldb import MySQL
 from wtforms import Form, StringField, TextAreaField, PasswordField, validators
 from passlib.hash import sha256_crypt
+from functools import wraps
 
 app = Flask(__name__)
 
@@ -17,22 +18,25 @@ mysql = MySQL(app)
 
 Articles = Articles()
 
+#index
 @app.route('/')
 def index():
     return render_template('home.html')
-
+# about
 @app.route('/about')
 def about():
     return render_template('about.html')
-
+# all articles
 @app.route('/articles')
 def articles():
     return render_template('articles.html', articles = Articles)
 
+# single aricle
 @app.route('/article/<string:id>/')
 def article(id):
     return render_template('article.html', id=id)
 
+# Register form class
 class RegisterForm(Form):
     name = StringField('Name', [validators.Length(min=1, max=50)])
     username = StringField('Username', [validators.Length(min=4, max=35)])
@@ -43,6 +47,7 @@ class RegisterForm(Form):
     ])
     confirm = PasswordField('Confirm Password')
 
+# user register
 @app.route('/register', methods=['GET', 'POST'])
 def register():
     form = RegisterForm(request.form)
@@ -56,7 +61,6 @@ def register():
         cur = mysql.connection.cursor()
 
         cur.execute("INSERT INTO users(name, email, username, password) VALUES(%s, %s, %s, %s)", (name, email, username, password))
-
         #commit to Database
 
         mysql.connection.commit()
@@ -66,9 +70,69 @@ def register():
 
         flash('Registration was successful, you can now log in', 'success')
 
-        return redirect(url_for('index'))
+        return redirect(url_for('login'))
 
     return render_template('register.html', form=form)
+
+# user login
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'POST':
+        #Get from fields
+        username = request.form['username']
+        password_candidate = request.form['password']
+
+        #create cur
+        cur = mysql.connection.cursor()
+
+        # get user by username
+        result = cur.execute("SELECT * FROM users WHERE username = %s", [username])
+
+        if result > 0:
+            #get stored hash
+            data = cur.fetchone()
+            password = data['password']
+
+            #compare passwords
+            if sha256_crypt.verify(password_candidate, password):
+                #passed
+                session["logged_in"] = True
+                session["username"] = username
+
+                flash("You are now logged in", "success")
+                return redirect(url_for('dashboard'))
+            else:
+                error = 'Invalid login'
+                return render_template('login.html', error=error)
+            # close the connection
+            cur.close()
+        else:
+            error = 'Username not found'
+            return render_template('login.html', error=error)
+    return render_template('login.html')
+
+# Check if logged in
+def is_logged_in(f):
+    @wraps(f)
+    def wrap(*args, **kwargs):
+        if 'logged_in' in session:
+            return f(*args, **kwargs)
+        else:
+            flash('Unauthorized, please log in', 'danger')
+            return redirect(url_for('login'))
+    return wrap
+# Dashboard
+@app.route('/dashboard')
+@is_logged_in
+def dashboard():
+    return render_template('dashboard.html')
+
+#Logout
+@app.route('/logout')
+def logout():
+    session.clear()
+    flash('You have been logged out', 'success')
+    return redirect(url_for("login"))
 
 
 
